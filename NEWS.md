@@ -1,6 +1,12 @@
 tag <next>:
 --------------------------------
 player: fix crash on invalid audio
+android: support build with ndk-r10
+ios: add IJKAVMoviePlayerController based on AVPlayer API
+ios: remove some unused interface
+ios8: fix latency of aout_pause_audio()
+ios8: upgrade project
+ffmpeg: switch to ffmpeg n2.4
 
 tag n0.1.3
 --------------------------------

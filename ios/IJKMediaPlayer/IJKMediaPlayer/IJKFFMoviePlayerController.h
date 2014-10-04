@@ -32,10 +32,27 @@
              withOptions:(IJKFFOptions *)options
      withSegmentResolver:(id<IJKMediaSegmentResolver>)segmentResolver;
 
+- (id)initWithContentURLString:(NSString *)aUrlString
+                   withOptions:(IJKFFOptions *)options
+           withSegmentResolver:(id<IJKMediaSegmentResolver>)segmentResolver;
+
 - (void)prepareToPlay;
 - (void)play;
 - (void)pause;
 - (void)stop;
 - (BOOL)isPlaying;
 
+- (void)setPauseInBackground:(BOOL)pause;
+
 @end
+
+#define IJK_FF_IO_TYPE_READ (1)
+void IJKFFIOStatDebugCallback(const char *url, int type, int bytes);
+void IJKFFIOStatRegister(void (*cb)(const char *url, int type, int bytes));
+
+void IJKFFIOStatCompleteDebugCallback(const char *url,
+                                      int64_t read_bytes, int64_t total_size,
+                                      int64_t elpased_time, int64_t total_duration);
+void IJKFFIOStatCompleteRegister(void (*cb)(const char *url,
+                                            int64_t read_bytes, int64_t total_size,
+                                            int64_t elpased_time, int64_t total_duration));

@@ -38,15 +38,10 @@
 @dynamic playbackState;
 @dynamic loadState;
 
-@dynamic naturalSize;
-
 @dynamic controlStyle;
 @dynamic scalingMode;
 @dynamic shouldAutoplay;
-@dynamic useApplicationAudioSession;
-@dynamic currentPlaybackRate;
-@dynamic initialPlaybackTime;
-@dynamic endPlaybackTime;
+@synthesize numberOfBytesTransferred = _numberOfBytesTransferred;
 
 - (id)initWithContentURL:(NSURL *)aUrl
 {
@@ -79,11 +74,22 @@
     default:
         return NO;
     }
+   
 }
 
 - (void)shutdown
 {
     // do nothing
+}
+
+-(int64_t)numberOfBytesTransferred
+{
+    NSArray *events = self.accessLog.events;
+    if (events.count>0) {
+        MPMovieAccessLogEvent *currentEvent = [events objectAtIndex:events.count -1];
+        return currentEvent.numberOfBytesTransferred;
+    }
+    return 0;
 }
 
 - (UIImage *)thumbnailImageAtCurrentTime

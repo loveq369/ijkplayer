@@ -49,6 +49,7 @@
     NSInteger _bufferingPosition;
 
     BOOL _keepScreenOnWhilePlaying;
+    BOOL _pauseInBackground;
 
     NSMutableArray *_registeredNotifications;
 }
@@ -59,19 +60,65 @@
 @synthesize playableDuration;
 @synthesize bufferingProgress = _bufferingProgress;
 
+@synthesize numberOfBytesTransferred = _numberOfBytesTransferred;
+
 @synthesize isPreparedToPlay = _isPreparedToPlay;
 @synthesize playbackState = _playbackState;
 @synthesize loadState = _loadState;
 
-@synthesize naturalSize = _naturalSize;
-
 @synthesize controlStyle = _controlStyle;
 @synthesize scalingMode = _scalingMode;
 @synthesize shouldAutoplay = _shouldAutoplay;
-@synthesize useApplicationAudioSession = _useApplicationAudioSession;
-@synthesize currentPlaybackRate = _currentPlaybackRate;
-@synthesize initialPlaybackTime = _initialPlaybackTime;
-@synthesize endPlaybackTime = _endPlaybackTime;
+
+#define FFP_IO_STAT_STEP (50 * 1024)
+
+// as an example
+void IJKFFIOStatDebugCallback(const char *url, int type, int bytes)
+{
+    static int64_t s_ff_io_stat_check_points = 0;
+    static int64_t s_ff_io_stat_bytes = 0;
+    if (!url)
+        return;
+
+    if (type != IJKMP_IO_STAT_READ)
+        return;
+
+    if (!av_strstart(url, "http:", NULL))
+        return;
+
+    s_ff_io_stat_bytes += bytes;
+    if (s_ff_io_stat_bytes < s_ff_io_stat_check_points ||
+        s_ff_io_stat_bytes > s_ff_io_stat_check_points + FFP_IO_STAT_STEP) {
+        s_ff_io_stat_check_points = s_ff_io_stat_bytes;
+        NSLog(@"io-stat: %s, +%d = %"PRId64"\n", url, bytes, s_ff_io_stat_bytes);
+    }
+}
+
+void IJKFFIOStatRegister(void (*cb)(const char *url, int type, int bytes))
+{
+    ijkmp_io_stat_register(cb);
+}
+
+void IJKFFIOStatCompleteDebugCallback(const char *url,
+                                      int64_t read_bytes, int64_t total_size,
+                                      int64_t elpased_time, int64_t total_duration)
+{
+    if (!url)
+        return;
+
+    if (!av_strstart(url, "http:", NULL))
+        return;
+
+    NSLog(@"io-stat-complete: %s, %"PRId64"/%"PRId64", %"PRId64"/%"PRId64"\n",
+          url, read_bytes, total_size, elpased_time, total_duration);
+}
+
+void IJKFFIOStatCompleteRegister(void (*cb)(const char *url,
+                                            int64_t read_bytes, int64_t total_size,
+                                            int64_t elpased_time, int64_t total_duration))
+{
+    ijkmp_io_stat_complete_register(cb);
+}
 
 - (id)initWithContentURL:(NSURL *)aUrl withOptions:(IJKFFOptions *)options
 {
@@ -87,21 +134,32 @@
     if (aUrl == nil)
         return nil;
 
+    return [self initWithContentURLString:[aUrl absoluteString]
+                              withOptions:options
+                      withSegmentResolver:segmentResolver];
+}
+
+- (id)initWithContentURLString:(NSString *)aUrlString
+                   withOptions:(IJKFFOptions *)options
+           withSegmentResolver:(id<IJKMediaSegmentResolver>)segmentResolver
+{
+    if (aUrlString == nil)
+        return nil;
+
     self = [super init];
     if (self) {
         ijkmp_global_init();
+
+        // IJKFFIOStatRegister(IJKFFIOStatDebugCallback);
+        // IJKFFIOStatCompleteRegister(IJKFFIOStatCompleteDebugCallback);
 
         // init fields
         _controlStyle = MPMovieControlStyleNone;
         _scalingMode = MPMovieScalingModeAspectFit;
         _shouldAutoplay = NO;
-        _useApplicationAudioSession = NO;
-        _currentPlaybackRate = 1.0f;
-        _initialPlaybackTime = 0;
-        _endPlaybackTime = 0;
 
         // init media resource
-        _ffMrl = [[IJKFFMrl alloc] initWithMrl:[aUrl absoluteString]];
+        _ffMrl = [[IJKFFMrl alloc] initWithMrl:aUrlString];
         _segmentResolver = segmentResolver;
 
         // init player
@@ -126,6 +184,7 @@
 
         // apply ffmpeg options
         [options applyTo:_mediaPlayer];
+        _pauseInBackground = options.pauseInBackground;
 
         // init extra
         _keepScreenOnWhilePlaying = YES;
@@ -197,6 +256,11 @@
     return ijkmp_is_playing(_mediaPlayer);
 }
 
+- (void)setPauseInBackground:(BOOL)pause
+{
+    _pauseInBackground = pause;
+}
+
 - (void)shutdown
 {
     if (!_mediaPlayer)
@@ -204,19 +268,19 @@
 
     [self setScreenOn:NO];
 
-    [self performSelectorInBackground:@selector(shupdownWaitStop:) withObject:self];
+    [self performSelectorInBackground:@selector(shutdownWaitStop:) withObject:self];
 }
 
-- (void)shupdownWaitStop:(IJKFFMoviePlayerController *) mySelf
+- (void)shutdownWaitStop:(IJKFFMoviePlayerController *) mySelf
 {
     if (!_mediaPlayer)
         return;
 
     ijkmp_stop(_mediaPlayer);
-    [self performSelectorOnMainThread:@selector(shupdownClose:) withObject:self waitUntilDone:YES];
+    [self performSelectorOnMainThread:@selector(shutdownClose:) withObject:self waitUntilDone:YES];
 }
 
-- (void)shupdownClose:(IJKFFMoviePlayerController *) mySelf
+- (void)shutdownClose:(IJKFFMoviePlayerController *) mySelf
 {
     if (!_mediaPlayer)
         return;
@@ -296,8 +360,11 @@
 
 - (NSTimeInterval)playableDuration
 {
-    // return self.currentPlaybackTime + ((NSTimeInterval)_bufferingTime) / 1000;
-    return ((NSTimeInterval)_bufferingPosition) / 1000;
+    if (!_mediaPlayer)
+        return 0.0f;
+
+    NSTimeInterval ret = ijkmp_get_playable_duration(_mediaPlayer);
+    return ret / 1000;
 }
 
 - (void)setScalingMode: (MPMovieScalingMode) aScalingMode
@@ -354,7 +421,8 @@
             [self setScreenOn:NO];
 
             [[NSNotificationCenter defaultCenter]
-             postNotificationName:IJKMoviePlayerPlaybackDidFinishNotification object:self];
+             postNotificationName:IJKMoviePlayerPlaybackStateDidChangeNotification
+             object:self];
 
             [[NSNotificationCenter defaultCenter]
                 postNotificationName:IJKMoviePlayerPlaybackDidFinishNotification
@@ -383,12 +451,13 @@
             [self setScreenOn:NO];
 
             [[NSNotificationCenter defaultCenter]
-             postNotificationName:IJKMoviePlayerPlaybackDidFinishNotification object:self];
+             postNotificationName:IJKMoviePlayerPlaybackStateDidChangeNotification
+             object:self];
 
             [[NSNotificationCenter defaultCenter]
              postNotificationName:IJKMoviePlayerPlaybackDidFinishNotification
              object:self
-             userInfo:@{MPMoviePlayerPlaybackDidFinishReasonUserInfoKey: @(MPMovieFinishReasonPlaybackError)}];
+             userInfo:@{MPMoviePlayerPlaybackDidFinishReasonUserInfoKey: @(MPMovieFinishReasonPlaybackEnded)}];
             break;
         }
         case FFP_MSG_VIDEO_SIZE_CHANGED:
@@ -610,7 +679,9 @@ int format_control_message(void *opaque, int type, void *data, size_t data_size)
 {
     NSLog(@"IJKFFMoviePlayerController:applicationWillResignActive: %d", (int)[UIApplication sharedApplication].applicationState);
     dispatch_async(dispatch_get_main_queue(), ^{
-        [self pause];
+        if (_pauseInBackground) {
+            [self pause];
+        }
     });
 }
 
@@ -618,7 +689,9 @@ int format_control_message(void *opaque, int type, void *data, size_t data_size)
 {
     NSLog(@"IJKFFMoviePlayerController:applicationDidEnterBackground: %d", (int)[UIApplication sharedApplication].applicationState);
     dispatch_async(dispatch_get_main_queue(), ^{
-        [self pause];
+        if (_pauseInBackground) {
+            [self pause];
+        }
     });
 }
 
@@ -626,8 +699,11 @@ int format_control_message(void *opaque, int type, void *data, size_t data_size)
 {
     NSLog(@"IJKFFMoviePlayerController:applicationWillTerminate: %d", (int)[UIApplication sharedApplication].applicationState);
     dispatch_async(dispatch_get_main_queue(), ^{
-        [self pause];
+        if (_pauseInBackground) {
+            [self pause];
+        }
     });
 }
 
 @end
+

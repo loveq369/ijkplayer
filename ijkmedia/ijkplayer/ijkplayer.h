@@ -138,8 +138,18 @@ typedef struct SDL_Vout SDL_Vout;
  */
 #define MP_STATE_END                9
 
- void           ijkmp_global_init();
- void           ijkmp_global_uninit();
+
+
+#define IJKMP_IO_STAT_READ 1
+
+
+
+void            ijkmp_global_init();
+void            ijkmp_global_uninit();
+void            ijkmp_io_stat_register(void (*cb)(const char *url, int type, int bytes));
+void            ijkmp_io_stat_complete_register(void (*cb)(const char *url,
+                                                           int64_t read_bytes, int64_t total_size,
+                                                           int64_t elpased_time, int64_t total_duration));
 
 // ref_count is 1 after open
 IjkMediaPlayer *ijkmp_create(int (*msg_loop)(void*));
@@ -172,6 +182,7 @@ int             ijkmp_get_state(IjkMediaPlayer *mp);
 bool            ijkmp_is_playing(IjkMediaPlayer *mp);
 long            ijkmp_get_current_position(IjkMediaPlayer *mp);
 long            ijkmp_get_duration(IjkMediaPlayer *mp);
+long            ijkmp_get_playable_duration(IjkMediaPlayer *mp);
 
 void           *ijkmp_set_weak_thiz(IjkMediaPlayer *mp, void *weak_thiz);
 

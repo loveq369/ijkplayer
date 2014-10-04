@@ -71,6 +71,19 @@ void ijkmp_global_uninit()
     ffp_global_uninit();
 }
 
+
+void ijkmp_io_stat_register(void (*cb)(const char *url, int type, int bytes))
+{
+    ffp_io_stat_register(cb);
+}
+
+void ijkmp_io_stat_complete_register(void (*cb)(const char *url,
+                                                int64_t read_bytes, int64_t total_size,
+                                                int64_t elpased_time, int64_t total_duration))
+{
+    ffp_io_stat_complete_register(cb);
+}
+
 void ijkmp_change_state_l(IjkMediaPlayer *mp, int new_state)
 {
     mp->mp_state = new_state;
@@ -509,6 +522,20 @@ long ijkmp_get_duration(IjkMediaPlayer *mp)
     assert(mp);
     pthread_mutex_lock(&mp->mutex);
     long retval = ijkmp_get_duration_l(mp);
+    pthread_mutex_unlock(&mp->mutex);
+    return retval;
+}
+
+static long ijkmp_get_playable_duration_l(IjkMediaPlayer *mp)
+{
+    return ffp_get_playable_duration_l(mp->ffplayer);
+}
+
+long ijkmp_get_playable_duration(IjkMediaPlayer *mp)
+{
+    assert(mp);
+    pthread_mutex_lock(&mp->mutex);
+    long retval = ijkmp_get_playable_duration_l(mp);
     pthread_mutex_unlock(&mp->mutex);
     return retval;
 }
